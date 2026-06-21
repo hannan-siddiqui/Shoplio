@@ -7,7 +7,7 @@ require('express-async-errors');
 
 const errorHandler = require('./middleware/errorHandler');
 const apiRoutes = require('./routes');
-
+const { initializeDatabase } = require('./services/db.service');
 
 const app = express();
 
@@ -38,7 +38,7 @@ const PORT = process.env.PORT || 5000;
 async function startServer() {
   try {
     // Initialize DB tables before starting
-    await initializeDatabase();
+    // await initializeDatabase();
 
     app.listen(PORT, () => {
       console.log(`\n✅  Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}\n`);
