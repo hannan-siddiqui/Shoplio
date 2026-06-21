@@ -7,7 +7,7 @@ require('express-async-errors');
 
 const errorHandler = require('./middleware/errorHandler');
 const apiRoutes = require('./routes');
-const { initializeDatabase } = require('./services/db.service');
+// const { initializeDatabase } = require('./services/db.service');
 
 const app = express();
 
