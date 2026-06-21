@@ -26,12 +26,22 @@ const getStats = async () => {
     'SELECT COUNT(*) AS pendingOrders FROM orders WHERE status = "pending"'
   );
 
+  const [[{ inventoryValue }]] = await pool.query(
+    'SELECT COALESCE(SUM(price * stock), 0) AS inventoryValue FROM products'
+  );
+
+  const [[{ lowStockCount }]] = await pool.query(
+    'SELECT COUNT(*) AS lowStockCount FROM products WHERE stock <= 5'
+  );
+
   return {
     totalRevenue: Number(totalRevenue),
     totalOrders,
     totalProducts,
     totalUsers,
     pendingOrders,
+    inventoryValue: Number(inventoryValue),
+    lowStockCount,
   };
 };
 

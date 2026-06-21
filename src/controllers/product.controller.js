@@ -1,13 +1,10 @@
 const productService = require('../services/product.service');
-
-/**
- * Product Controller — handles HTTP request/response for products.
- */
+const categoryService = require('../services/category.service');
 
 /** GET /api/products */
 const getAll = async (req, res) => {
-  const { search, page, limit } = req.query;
-  const result = await productService.getAll({ search, page, limit });
+  const { search, category_id, page, limit } = req.query;
+  const result = await productService.getAll({ search, category_id, page, limit });
 
   res.json({
     success: true,
@@ -18,8 +15,6 @@ const getAll = async (req, res) => {
 
 /** GET /api/products/:id */
 const getById = async (req, res) => {
-
-  console.log("id: ", req.params.id);
   const product = await productService.getById(req.params.id);
 
   if (!product) {
@@ -38,7 +33,7 @@ const getById = async (req, res) => {
 
 /** POST /api/products */
 const create = async (req, res) => {
-  const { name, description, price, stock } = req.body;
+  const { name, description, price, stock, category_id } = req.body;
 
   if (!name || price === undefined) {
     return res.status(400).json({
@@ -47,7 +42,28 @@ const create = async (req, res) => {
     });
   }
 
-  const product = await productService.create({ name, description, price, stock });
+  if (!category_id) {
+    return res.status(400).json({
+      success: false,
+      message: 'category_id is required',
+    });
+  }
+
+  const categoryExists = await categoryService.exists(category_id);
+  if (!categoryExists) {
+    return res.status(400).json({
+      success: false,
+      message: `Category with id ${category_id} not found`,
+    });
+  }
+
+  const product = await productService.create({
+    name,
+    description,
+    price,
+    stock,
+    category_id,
+  });
 
   res.status(201).json({
     success: true,
@@ -58,8 +74,25 @@ const create = async (req, res) => {
 
 /** PUT /api/products/:id */
 const update = async (req, res) => {
-  const { name, description, price, stock } = req.body;
-  const product = await productService.update(req.params.id, { name, description, price, stock });
+  const { name, description, price, stock, category_id } = req.body;
+
+  if (category_id !== undefined) {
+    const categoryExists = await categoryService.exists(category_id);
+    if (!categoryExists) {
+      return res.status(400).json({
+        success: false,
+        message: `Category with id ${category_id} not found`,
+      });
+    }
+  }
+
+  const product = await productService.update(req.params.id, {
+    name,
+    description,
+    price,
+    stock,
+    category_id,
+  });
 
   if (!product) {
     return res.status(404).json({
