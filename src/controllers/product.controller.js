@@ -1,10 +1,25 @@
 const productService = require('../services/product.service');
 const categoryService = require('../services/category.service');
+const collectionService = require('../services/collection.service');
 
 /** GET /api/products */
 const getAll = async (req, res) => {
-  const { search, category_id, page, limit } = req.query;
-  const result = await productService.getAll({ search, category_id, page, limit });
+  const { search, category_id, collection, page, limit } = req.query;
+
+  // Resolve collection slug → id if provided
+  let collection_id;
+  if (collection) {
+    const col = await collectionService.getBySlug(collection);
+    if (!col) {
+      return res.status(404).json({
+        success: false,
+        message: `Collection with slug "${collection}" not found`,
+      });
+    }
+    collection_id = col.id;
+  }
+
+  const result = await productService.getAll({ search, category_id, collection_id, page, limit });
 
   res.json({
     success: true,
@@ -33,7 +48,7 @@ const getById = async (req, res) => {
 
 /** POST /api/products */
 const create = async (req, res) => {
-  const { name, description, price, stock, category_id } = req.body;
+  const { name, description, price, stock, category_id, categoryIds: rawCatIds, collectionIds } = req.body;
 
   if (!name || price === undefined) {
     return res.status(400).json({
@@ -42,19 +57,33 @@ const create = async (req, res) => {
     });
   }
 
-  if (!category_id) {
-    return res.status(400).json({
-      success: false,
-      message: 'category_id is required',
-    });
+  // Support both legacy category_id (single) and new categoryIds (array)
+  let categoryIds = rawCatIds || [];
+  if (!rawCatIds && category_id) {
+    categoryIds = [category_id];
   }
 
-  const categoryExists = await categoryService.exists(category_id);
-  if (!categoryExists) {
-    return res.status(400).json({
-      success: false,
-      message: `Category with id ${category_id} not found`,
-    });
+  // Validate that all referenced categories exist
+  for (const id of categoryIds) {
+    const exists = await categoryService.exists(id);
+    if (!exists) {
+      return res.status(400).json({
+        success: false,
+        message: `Category with id ${id} not found`,
+      });
+    }
+  }
+
+  // Validate that all referenced collections exist
+  const colIds = collectionIds || [];
+  for (const id of colIds) {
+    const exists = await collectionService.exists(id);
+    if (!exists) {
+      return res.status(400).json({
+        success: false,
+        message: `Collection with id ${id} not found`,
+      });
+    }
   }
 
   const product = await productService.create({
@@ -62,7 +91,8 @@ const create = async (req, res) => {
     description,
     price,
     stock,
-    category_id,
+    categoryIds,
+    collectionIds: colIds,
   });
 
   res.status(201).json({
@@ -74,15 +104,37 @@ const create = async (req, res) => {
 
 /** PUT /api/products/:id */
 const update = async (req, res) => {
-  const { name, description, price, stock, category_id } = req.body;
+  const { name, description, price, stock, category_id, categoryIds: rawCatIds, collectionIds } = req.body;
 
-  if (category_id !== undefined) {
-    const categoryExists = await categoryService.exists(category_id);
-    if (!categoryExists) {
-      return res.status(400).json({
-        success: false,
-        message: `Category with id ${category_id} not found`,
-      });
+  // Support both legacy category_id (single) and new categoryIds (array)
+  let categoryIds = rawCatIds;
+  if (rawCatIds === undefined && category_id !== undefined) {
+    categoryIds = [category_id];
+  }
+
+  // Validate categories if provided
+  if (categoryIds !== undefined) {
+    for (const id of categoryIds) {
+      const exists = await categoryService.exists(id);
+      if (!exists) {
+        return res.status(400).json({
+          success: false,
+          message: `Category with id ${id} not found`,
+        });
+      }
+    }
+  }
+
+  // Validate collections if provided
+  if (collectionIds !== undefined) {
+    for (const id of collectionIds) {
+      const exists = await collectionService.exists(id);
+      if (!exists) {
+        return res.status(400).json({
+          success: false,
+          message: `Collection with id ${id} not found`,
+        });
+      }
     }
   }
 
@@ -91,7 +143,8 @@ const update = async (req, res) => {
     description,
     price,
     stock,
-    category_id,
+    categoryIds,
+    collectionIds,
   });
 
   if (!product) {

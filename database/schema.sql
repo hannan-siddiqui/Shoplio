@@ -18,18 +18,49 @@ CREATE TABLE IF NOT EXISTS categories (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS collections (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(100) NOT NULL UNIQUE,
+  slug VARCHAR(120) NOT NULL UNIQUE,
+  description TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS products (
   id INT AUTO_INCREMENT PRIMARY KEY,
   name VARCHAR(255) NOT NULL,
   description TEXT,
   price DECIMAL(10, 2) NOT NULL,
   stock INT NOT NULL DEFAULT 0,
-  category_id INT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  CONSTRAINT fk_products_category
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+
+-- Many-to-many: products <-> categories
+CREATE TABLE IF NOT EXISTS product_categories (
+  product_id INT NOT NULL,
+  category_id INT NOT NULL,
+  PRIMARY KEY (product_id, category_id),
+  CONSTRAINT fk_pc_product
+    FOREIGN KEY (product_id) REFERENCES products(id)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_pc_category
     FOREIGN KEY (category_id) REFERENCES categories(id)
-    ON DELETE SET NULL
+    ON DELETE CASCADE
+);
+
+-- Many-to-many: products <-> collections
+CREATE TABLE IF NOT EXISTS product_collections (
+  product_id INT NOT NULL,
+  collection_id INT NOT NULL,
+  PRIMARY KEY (product_id, collection_id),
+  CONSTRAINT fk_pcol_product
+    FOREIGN KEY (product_id) REFERENCES products(id)
+    ON DELETE CASCADE,
+  CONSTRAINT fk_pcol_collection
+    FOREIGN KEY (collection_id) REFERENCES collections(id)
+    ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS orders (

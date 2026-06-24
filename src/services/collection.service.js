@@ -1,10 +1,20 @@
 const pool = require('../config/db');
 
+/** Generate a URL-friendly slug from a name */
+function slugify(name) {
+  return name
+    .toLowerCase()
+    .trim()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/[\s_]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 const getAll = async ({ search, page = 1, limit = 50 } = {}) => {
   let sql = `
     SELECT c.*, COUNT(pc.product_id) AS product_count
-    FROM categories c
-    LEFT JOIN product_categories pc ON pc.category_id = c.id
+    FROM collections c
+    LEFT JOIN product_collections pc ON pc.collection_id = c.id
   `;
   const params = [];
 
@@ -18,7 +28,7 @@ const getAll = async ({ search, page = 1, limit = 50 } = {}) => {
 
   const [rows] = await pool.query(sql, params);
 
-  let countSql = 'SELECT COUNT(*) AS total FROM categories';
+  let countSql = 'SELECT COUNT(*) AS total FROM collections';
   const countParams = [];
   if (search) {
     countSql += ' WHERE name LIKE ? OR description LIKE ?';
@@ -40,8 +50,8 @@ const getAll = async ({ search, page = 1, limit = 50 } = {}) => {
 const getById = async (id) => {
   const [rows] = await pool.query(
     `SELECT c.*, COUNT(pc.product_id) AS product_count
-     FROM categories c
-     LEFT JOIN product_categories pc ON pc.category_id = c.id
+     FROM collections c
+     LEFT JOIN product_collections pc ON pc.collection_id = c.id
      WHERE c.id = ?
      GROUP BY c.id`,
     [id]
@@ -49,10 +59,20 @@ const getById = async (id) => {
   return rows[0] || null;
 };
 
+/** Find a collection by its slug */
+const getBySlug = async (slug) => {
+  const [rows] = await pool.query(
+    'SELECT id FROM collections WHERE slug = ?',
+    [slug]
+  );
+  return rows[0] || null;
+};
+
 const create = async ({ name, description }) => {
+  const slug = slugify(name);
   const [result] = await pool.query(
-    'INSERT INTO categories (name, description) VALUES (?, ?)',
-    [name, description || null]
+    'INSERT INTO collections (name, slug, description) VALUES (?, ?, ?)',
+    [name, slug, description || null]
   );
   return getById(result.insertId);
 };
@@ -61,14 +81,22 @@ const update = async (id, { name, description }) => {
   const fields = [];
   const params = [];
 
-  if (name !== undefined)        { fields.push('name = ?');        params.push(name); }
-  if (description !== undefined) { fields.push('description = ?'); params.push(description); }
+  if (name !== undefined) {
+    fields.push('name = ?');
+    params.push(name);
+    fields.push('slug = ?');
+    params.push(slugify(name));
+  }
+  if (description !== undefined) {
+    fields.push('description = ?');
+    params.push(description);
+  }
 
   if (fields.length === 0) return getById(id);
 
   params.push(id);
   const [result] = await pool.query(
-    `UPDATE categories SET ${fields.join(', ')} WHERE id = ?`,
+    `UPDATE collections SET ${fields.join(', ')} WHERE id = ?`,
     params
   );
 
@@ -77,16 +105,16 @@ const update = async (id, { name, description }) => {
 };
 
 const remove = async (id) => {
-  const category = await getById(id);
-  if (!category) return null;
+  const collection = await getById(id);
+  if (!collection) return null;
 
-  await pool.query('DELETE FROM categories WHERE id = ?', [id]);
-  return category;
+  await pool.query('DELETE FROM collections WHERE id = ?', [id]);
+  return collection;
 };
 
 const exists = async (id) => {
-  const [rows] = await pool.query('SELECT id FROM categories WHERE id = ?', [id]);
+  const [rows] = await pool.query('SELECT id FROM collections WHERE id = ?', [id]);
   return rows.length > 0;
 };
 
-module.exports = { getAll, getById, create, update, remove, exists };
+module.exports = { getAll, getById, getBySlug, create, update, remove, exists };
