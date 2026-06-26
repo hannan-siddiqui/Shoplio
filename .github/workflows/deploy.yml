@@ -17,18 +17,20 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "22.x"  # Updated to Node.js 22
+          node-version: "22.x"
           cache: "npm"
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Create deployment package
+      - name: Create deployment package (without node_modules)
         run: |
           mkdir -p deploy
+          cp -r dist deploy/
           cp -r src deploy/
           cp package*.json deploy/
-          cp ecosystem.config.cjs deploy/ 2>/dev/null || echo "No ecosystem file"
+          cp ecosystem.config.cjs deploy/
+          # Copy .env.example if exists
           [ -f .env.example ] && cp .env.example deploy/ || echo "No .env.example found"
           tar -czf deploy.tar.gz -C deploy .
 
@@ -71,17 +73,21 @@ jobs:
             # Navigate to app directory
             cd /var/www/express-app
 
-            # Fix ownership first
+            # Fix ownership first (important!)
             echo "Fixing directory ownership..."
             sudo chown -R $USER:$USER /var/www/express-app
             
-            # Backup current version
-            timestamp=$(date +%Y%m%d_%H%M%S)
-            mkdir -p backups
-            tar -czf backups/backup_${timestamp}.tar.gz src package.json ecosystem.config.cjs .env 2>/dev/null || true
-            ls -t backups/backup_*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm
             
-            # Extract new version
+            # Backup current version
+            if [ -d "dist" ]; then
+              timestamp=$(date +%Y%m%d_%H%M%S)
+              mkdir -p backups
+              tar -czf backups/backup_${timestamp}.tar.gz dist package.json ecosystem.config.cjs .env 2>/dev/null || true
+              # Keep only last 5 backups
+              ls -t backups/backup_*.tar.gz 2>/dev/null | tail -n +6 | xargs -r rm
+            fi
+            
+            # Extract new version (this will overwrite existing files)
             echo "Extracting new deployment package..."
             tar --overwrite -xzf /tmp/deploy.tar.gz -C /var/www/express-app
             rm /tmp/deploy.tar.gz
@@ -89,17 +95,17 @@ jobs:
             # Fix ownership after extraction
             sudo chown -R $USER:$USER /var/www/express-app
             
-            # Install production dependencies
-            echo "Installing production dependencies..."
-            npm ci --omit=dev
             
-            # Create .env file if needed
+            # Install production dependencies on the server
+            echo ""
+            echo "Installing production dependencies..."
+            npm ci
+            
+            # Create .env file if needed (only on first deploy)
             if [ ! -f .env ]; then
               echo "Creating default .env file..."
-              cat > .env << 'ENVEOF'
-NODE_ENV=production
-PORT=8000
-ENVEOF
+              echo "NODE_ENV=production" > .env
+              echo "PORT=8000" >> .env
             fi
             
             # Create logs directory
@@ -108,14 +114,14 @@ ENVEOF
             # Zero-downtime reload with PM2
             if pm2 describe express-app > /dev/null 2>&1; then
               echo "Reloading PM2 app (zero-downtime)..."
-              pm2 reload ecosystem.config.cjs --update-env
+              sudo pm2 reload ecosystem.config.cjs --update-env
             else
               echo "Starting new PM2 process..."
-              pm2 start ecosystem.config.cjs
+              sudo pm2 start ecosystem.config.cjs
             fi
             
             # Save PM2 process list
-            pm2 save
+            sudo pm2 save
            
           EOF
 
@@ -129,8 +135,9 @@ ENVEOF
           echo "Waiting for application to start..."
           sleep 10
 
-          for i in {1..3}; do
-            echo "Attempt $i of 3..."
+          # Check if app responds via nginx (try multiple times)
+          for i in {1..2}; do
+            echo "Attempt $i of 2..."
             response=$(curl -s -o /dev/null -w "%{http_code}" http://${EC2_HOST} 2>/dev/null || echo "000")
             
             if [ "$response" = "200" ] || [ "$response" = "301" ] || [ "$response" = "302" ]; then
@@ -142,8 +149,8 @@ ENVEOF
             sleep 5
           done
 
-          echo "❌ Deployment verification failed after 3 attempts"
-          echo "Check PM2 logs on the server: pm2 logs express-app"
+          echo "❌ Deployment verification failed after 2 attempts"
+          echo "Please check PM2 logs on the server"
           exit 1
 
       - name: Rollback on failure
@@ -163,7 +170,7 @@ ENVEOF
             
             cd /var/www/express-app
 
-            # Fix ownership first
+            # Fix ownership first (important!)
             sudo chown -R $USER:$USER /var/www/express-app
             
             # Find latest backup
@@ -172,7 +179,7 @@ ENVEOF
             if [ -n "$latest_backup" ]; then
               echo "Found backup: $latest_backup"
               tar -xzf "$latest_backup" -C /var/www/express-app
-              npm ci --omit=dev
+              npm ci
               pm2 reload ecosystem.config.cjs
               echo "✅ Rolled back to previous version"
             else
