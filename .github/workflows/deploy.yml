@@ -50,6 +50,15 @@ jobs:
         with:
           name: deployment-package
 
+      - name: Debug - Check files
+        run: |
+          echo "Current directory:"
+          pwd
+          echo "Files:"
+          ls -la
+          echo "Deployment package:"
+          ls -lh deploy.tar.gz
+
       - name: Deploy to EC2 via SSH
         env:
           EC2_HOST: ${{ secrets.EC2_HOST }}
@@ -60,12 +69,96 @@ jobs:
           echo "$SSH_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
 
+          # Test SSH connection
+          echo "Testing SSH connection..."
+          ssh -i private_key.pem -o StrictHostKeyChecking=no -v ${EC2_USERNAME}@${EC2_HOST} "echo 'SSH connection successful'"
+
           # Copy deployment package to EC2
+          echo "Copying deployment package..."
           scp -i private_key.pem -o StrictHostKeyChecking=no \
             deploy.tar.gz ${EC2_USERNAME}@${EC2_HOST}:/tmp/
 
-          # SSH into EC2 and deploy
-          ssh -i private_key.pem -o StrictHostKeyChecking=no ${EC2_USERNAME}@${EC2_HOST} "cd /var/www/express-app && sudo chown -R $USER:$USER /var/www/express-app && timestamp=\$(date +%Y%m%d_%H%M%S) && mkdir -p backups && tar -czf backups/backup_\${timestamp}.tar.gz src package.json ecosystem.config.cjs .env 2>/dev/null || true && tar --overwrite -xzf /tmp/deploy.tar.gz -C /var/www/express-app && rm /tmp/deploy.tar.gz && sudo chown -R $USER:$USER /var/www/express-app && npm ci --omit=dev && if [ ! -f .env ]; then echo 'NODE_ENV=production' > .env && echo 'PORT=8000' >> .env; fi && mkdir -p logs && if pm2 describe express-app > /dev/null 2>&1; then pm2 reload ecosystem.config.cjs --update-env; else pm2 start ecosystem.config.cjs; fi && pm2 save"
+          # Deploy on EC2
+          echo "Running deployment commands..."
+          ssh -i private_key.pem -o StrictHostKeyChecking=no \
+            ${EC2_USERNAME}@${EC2_HOST} << 'EOF'
+            
+            set -e  # Exit on error
+            
+            echo "=== Starting deployment ==="
+            echo "Current user: $(whoami)"
+            echo "Current directory: $(pwd)"
+            
+            # Navigate to app directory
+            cd /var/www/express-app
+            echo "Changed to: $(pwd)"
+            
+            # Fix ownership
+            echo "Fixing ownership..."
+            sudo chown -R $USER:$USER /var/www/express-app
+            
+            # Create backups directory
+            mkdir -p backups
+            
+            # Backup current version
+            echo "Creating backup..."
+            timestamp=$(date +%Y%m%d_%H%M%S)
+            if [ -d "src" ]; then
+              tar -czf backups/backup_${timestamp}.tar.gz src package.json ecosystem.config.cjs .env 2>/dev/null || true
+              echo "Backup created: backups/backup_${timestamp}.tar.gz"
+            fi
+            
+            # Extract new version
+            echo "Extracting deployment package..."
+            tar --overwrite -xzf /tmp/deploy.tar.gz -C /var/www/express-app
+            rm /tmp/deploy.tar.gz
+            echo "Extraction complete"
+            
+            # Fix ownership after extraction
+            echo "Fixing ownership after extraction..."
+            sudo chown -R $USER:$USER /var/www/express-app
+            
+            # Install dependencies
+            echo "Installing dependencies..."
+            npm ci --omit=dev
+            echo "Dependencies installed"
+            
+            # Create .env file if needed
+            if [ ! -f .env ]; then
+              echo "Creating .env file..."
+              cat > .env << 'ENVEOF'
+NODE_ENV=production
+PORT=8000
+ENVEOF
+              echo ".env file created"
+            fi
+            
+            # Create logs directory
+            mkdir -p logs
+            
+            # Check PM2 status
+            echo "Checking PM2 status..."
+            pm2 list || echo "PM2 not running"
+            
+            # Start or reload PM2
+            if pm2 describe express-app > /dev/null 2>&1; then
+              echo "Reloading PM2 app..."
+              pm2 reload ecosystem.config.cjs --update-env
+            else
+              echo "Starting new PM2 process..."
+              pm2 start ecosystem.config.cjs
+            fi
+            
+            # Save PM2 process list
+            pm2 save
+            echo "PM2 save complete"
+            
+            echo "=== Deployment complete ==="
+            echo "Checking if app is running..."
+            pm2 list
+            curl -s http://localhost:8000 || echo "App not responding on port 8000"
+            
+          EOF
 
           # Cleanup
           rm private_key.pem
@@ -91,7 +184,7 @@ jobs:
           done
 
           echo "❌ Deployment verification failed after 3 attempts"
-          echo "Check PM2 logs on the server: pm2 logs express-app"
+          echo "Check PM2 logs on the server"
           exit 1
 
       - name: Rollback on failure
@@ -106,6 +199,30 @@ jobs:
           echo "$SSH_PRIVATE_KEY" > private_key.pem
           chmod 600 private_key.pem
 
-          ssh -i private_key.pem -o StrictHostKeyChecking=no ${EC2_USERNAME}@${EC2_HOST} "cd /var/www/express-app && sudo chown -R $USER:$USER /var/www/express-app && latest_backup=\$(ls -t backups/backup_*.tar.gz 2>/dev/null | head -1) && if [ -n \"\$latest_backup\" ]; then tar -xzf \"\$latest_backup\" -C /var/www/express-app && npm ci --omit=dev && pm2 reload ecosystem.config.cjs && echo '✅ Rolled back to previous version'; else echo '⚠️ No backup found, cannot rollback'; fi"
+          ssh -i private_key.pem -o StrictHostKeyChecking=no \
+            ${EC2_USERNAME}@${EC2_HOST} << 'EOF'
+            
+            cd /var/www/express-app
+            
+            echo "Current directory: $(pwd)"
+            echo "Available backups:"
+            ls -la backups/
+            
+            # Fix ownership
+            sudo chown -R $USER:$USER /var/www/express-app
+            
+            # Find latest backup
+            latest_backup=$(ls -t backups/backup_*.tar.gz 2>/dev/null | head -1)
+            
+            if [ -n "$latest_backup" ]; then
+              echo "Found backup: $latest_backup"
+              tar -xzf "$latest_backup" -C /var/www/express-app
+              npm ci --omit=dev
+              pm2 reload ecosystem.config.cjs
+              echo "✅ Rolled back to previous version"
+            else
+              echo "⚠️ No backup found, cannot rollback"
+            fi
+          EOF
 
           rm private_key.pem
