@@ -8,7 +8,8 @@ on:
   workflow_dispatch:
 
 env:
-  APP_NAME: ecommerce-backend
+  APP_DIR: /var/www/express-app
+  APP_NAME: express-app
 
 jobs:
   deploy:
@@ -30,7 +31,8 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
           script: |
-            mkdir -p "$HOME/${{ env.APP_NAME }}"
+            sudo mkdir -p ${{ env.APP_DIR }}
+            sudo chown -R $USER:$USER ${{ env.APP_DIR }}
 
       - name: Upload deployment package
         uses: appleboy/scp-action@v1.0.0
@@ -40,7 +42,7 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
           source: deploy.tar.gz
-          target: /home/${{ secrets.EC2_USERNAME }}/
+          target: /tmp/
 
       - name: Install dependencies and restart app
         uses: appleboy/ssh-action@v1.2.2
@@ -54,12 +56,12 @@ jobs:
           script: |
             set -e
 
-            APP_DIR="$HOME/${{ env.APP_NAME }}"
+            APP_DIR="${{ env.APP_DIR }}"
             cd "$APP_DIR"
 
             echo "Extracting deployment package..."
-            tar -xzf "$HOME/deploy.tar.gz" -C "$APP_DIR"
-            rm -f "$HOME/deploy.tar.gz"
+            tar -xzf /tmp/deploy.tar.gz -C "$APP_DIR"
+            rm -f /tmp/deploy.tar.gz
 
             echo "Node: $(node -v)"
             echo "NPM: $(npm -v)"
@@ -70,6 +72,14 @@ jobs:
               exit 1
             fi
 
+            if [ ! -f "$APP_DIR/.env" ]; then
+              echo "ERROR: .env not found at $APP_DIR/.env"
+              echo "Create it manually on EC2 before deploying."
+              exit 1
+            fi
+
+            echo ".env found — existing server config will be kept"
+
             echo "Installing production dependencies..."
             npm ci --omit=dev
 
@@ -79,13 +89,19 @@ jobs:
             fi
 
             echo "Starting or restarting application..."
+            cd "$APP_DIR"
+
             if pm2 describe "${{ env.APP_NAME }}" >/dev/null 2>&1; then
               pm2 restart "${{ env.APP_NAME }}" --update-env
             else
-              pm2 start src/server.js --name "${{ env.APP_NAME }}"
+              pm2 start src/server.js --name "${{ env.APP_NAME }}" --cwd "$APP_DIR"
             fi
 
             pm2 save || true
 
             echo "Deployment completed successfully."
             pm2 status
+
+            echo "Health check..."
+            sleep 3
+            curl -sf "http://localhost:8000/api/health" && echo "" || echo "WARNING: health check failed — check pm2 logs"
