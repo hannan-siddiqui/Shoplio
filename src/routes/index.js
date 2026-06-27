@@ -11,7 +11,7 @@ router.use('/users', require('./user.routes'));
 
 // Health-check for /api
 router.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({ status: 'ok', message: 'Ecommerce API is running successfully', timestamp: new Date().toISOString() });
 });
 
 module.exports = router;
