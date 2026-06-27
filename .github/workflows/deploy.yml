@@ -9,7 +9,6 @@ on:
 
 env:
   APP_NAME: ecommerce-backend
-  APP_DIR: ecommerce-backend
 
 jobs:
   deploy:
@@ -20,38 +19,63 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Copy files to EC2
+      - name: Create deployment package
+        run: tar -czf deploy.tar.gz package.json package-lock.json src database
+
+      - name: Prepare app directory on EC2
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script: |
+            mkdir -p "$HOME/${{ env.APP_NAME }}"
+
+      - name: Upload deployment package
         uses: appleboy/scp-action@v1.0.0
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
-          source: "package.json,package-lock.json,src,database"
-          target: /home/${{ secrets.EC2_USERNAME }}/${{ env.APP_DIR }}
-          overwrite: true
+          source: deploy.tar.gz
+          target: /home/${{ secrets.EC2_USERNAME }}/
 
       - name: Install dependencies and restart app
-        uses: appleboy/ssh-action@v1.2.0
+        uses: appleboy/ssh-action@v1.2.2
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
           port: 22
           script_stop: true
+          command_timeout: 10m
           script: |
             set -e
 
             APP_DIR="$HOME/${{ env.APP_NAME }}"
-            mkdir -p "$APP_DIR"
             cd "$APP_DIR"
+
+            echo "Extracting deployment package..."
+            tar -xzf "$HOME/deploy.tar.gz" -C "$APP_DIR"
+            rm -f "$HOME/deploy.tar.gz"
+
+            echo "Node: $(node -v)"
+            echo "NPM: $(npm -v)"
+            ls -la "$APP_DIR"
+
+            if [ ! -f "$APP_DIR/package.json" ]; then
+              echo "ERROR: package.json not found after extract"
+              exit 1
+            fi
 
             echo "Installing production dependencies..."
             npm ci --omit=dev
 
             echo "Ensuring PM2 is installed..."
             if ! command -v pm2 >/dev/null 2>&1; then
-              npm install -g pm2
+              sudo npm install -g pm2
             fi
 
             echo "Starting or restarting application..."
@@ -61,6 +85,7 @@ jobs:
               pm2 start src/server.js --name "${{ env.APP_NAME }}"
             fi
 
-            pm2 save
+            pm2 save || true
 
             echo "Deployment completed successfully."
+            pm2 status
